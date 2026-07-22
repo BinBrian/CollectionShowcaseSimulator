@@ -3,6 +3,7 @@
 import argparse
 import html
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -109,6 +110,45 @@ def collect_records(grades: List[int]) -> List[Tuple[int, str, int, int]]:
     return [unique[item_id] for item_id in sorted(unique)]
 
 
+def load_existing_items(path: Path) -> Dict[int, Dict[str, object]]:
+    if not path.exists():
+        return {}
+    existing: Dict[int, Dict[str, object]] = {}
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("现有输出文件第 %d 行不是有效 JSON" % line_number) from error
+        item_id = record.get("itemId") if isinstance(record, dict) else None
+        if not isinstance(item_id, int) or isinstance(item_id, bool):
+            raise RuntimeError("现有输出文件第 %d 行缺少有效道具 ID" % line_number)
+        if item_id in existing:
+            raise RuntimeError("现有输出文件包含重复道具 ID：%d" % item_id)
+        existing[item_id] = record
+    return existing
+
+
+def write_jsonl_atomically(path: Path, records: List[Dict[str, object]]) -> None:
+    temporary = path.with_name(path.name + ".tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            for record in records:
+                handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(str(temporary), str(path))
+    finally:
+        if temporary.exists():
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
@@ -121,6 +161,7 @@ def main() -> None:
     )
     quality_ids = {record["qualityId"] for record in qualities}
     rows = collect_records(sorted(quality_ids))
+    existing = load_existing_items(args.output)
     imported = []
     for item_id, name, quality_id, value in rows:
         if quality_id not in quality_ids:
@@ -129,6 +170,7 @@ def main() -> None:
             resource_cost = resource_cost_for_value(value, value_costs)
         except Exception as error:
             raise RuntimeError("道具 %s（ID %d，价值 %d）没有对应的资源区间" % (name, item_id, value)) from error
+        previous = existing.get(item_id)
         imported.append(
             {
                 "itemId": item_id,
@@ -136,18 +178,22 @@ def main() -> None:
                 "qualityId": quality_id,
                 "value": value,
                 "resourceCost": resource_cost,
-                "specId": args.spec_id,
+                "specId": previous["specId"] if previous is not None else args.spec_id,
             }
         )
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    content = "".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in imported)
-    args.output.write_text(content, encoding="utf-8")
+    imported_ids = {row["itemId"] for row in imported}
+    preserved = [record for item_id, record in existing.items() if item_id not in imported_ids]
+    output_records = sorted(imported + preserved, key=lambda record: int(record["itemId"]))
+    write_jsonl_atomically(args.output, output_records)
     print(
         json.dumps(
             {
                 "source": SOURCE_URL,
-                "records": len(imported),
+                "records": len(output_records),
+                "updated": sum(row["itemId"] in existing for row in imported),
+                "new": sum(row["itemId"] not in existing for row in imported),
+                "preservedLocal": len(preserved),
                 "minimumValue": min(row["value"] for row in imported),
                 "maximumValue": max(row["value"] for row in imported),
                 "output": str(args.output),

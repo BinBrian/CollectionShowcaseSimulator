@@ -1,7 +1,22 @@
 import unittest
 from statistics import median
 
-from generator import GenerationError, QUALITY_COLORS, RESOURCE_BUDGETS, ValidationError, generate_collection
+from config_store import build_generator_specs, load_all_configuration_snapshot
+from generator import GenerationError, QUALITY_COLORS, ValidationError, generate_collection as _generate_collection
+
+
+TEST_BUDGETS = [
+    {"budgetId": 1, "resourceBudget": 6000},
+    {"budgetId": 2, "resourceBudget": 3800},
+    {"budgetId": 3, "resourceBudget": 2550},
+    {"budgetId": 4, "resourceBudget": 1200},
+]
+
+
+def generate_collection(*args, **kwargs):
+    if len(args) < 6 and "resource_budget_configs" not in kwargs:
+        kwargs["resource_budget_configs"] = TEST_BUDGETS
+    return _generate_collection(*args, **kwargs)
 
 
 def qualities(*weights):
@@ -55,7 +70,7 @@ class GeneratorTests(unittest.TestCase):
 
     def test_budget_is_rolled_from_four_tiers_and_spent_until_unaffordable(self):
         result = generate_collection(4, [spec(1, 1, 1, [item(1, resource_cost=500)])], qualities(), 8)
-        self.assertIn(result["resourceBudget"], RESOURCE_BUDGETS)
+        self.assertIn(result["resourceBudget"], [entry["resourceBudget"] for entry in TEST_BUDGETS])
         self.assertLess(result["resourceRemaining"], 500)
         self.assert_layout_valid(result)
 
@@ -103,6 +118,39 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(result["resourceBudgetOptions"], [1350])
         with self.assertRaises(ValidationError):
             generate_collection(3, [spec(1, 1, 1, [item(1)])], qualities(), 1, None, [])
+
+    def test_resource_budget_configuration_is_required(self):
+        with self.assertRaises(ValidationError) as context:
+            _generate_collection(3, [spec(1, 1, 1, [item(1)])], qualities(), 1)
+        self.assertEqual(context.exception.code, "missing_resource_budgets")
+
+    def test_item_limit_reports_truncation(self):
+        configured = [{"budgetId": 1, "resourceBudget": 1000}]
+        result = _generate_collection(
+            10,
+            [spec(1, 1, 1, [item(1, resource_cost=1)])],
+            qualities(),
+            4,
+            1000,
+            configured,
+        )
+        self.assertEqual(result["itemCount"], 200)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["terminationReason"], "item_limit")
+
+    def test_production_budget_tiers_target_ten_to_thirty_items(self):
+        specs, items, production_qualities, _, budgets = load_all_configuration_snapshot()
+        generator_specs = build_generator_specs(specs, items)
+        for option in budgets:
+            budget = option["resourceBudget"]
+            counts = sorted(
+                _generate_collection(
+                    10, generator_specs, production_qualities, seed, budget, budgets
+                )["itemCount"]
+                for seed in range(100)
+            )
+            self.assertGreaterEqual(counts[9], 10)
+            self.assertLessEqual(counts[89], 30)
 
     def test_skyline_rotates_wide_item_and_grows_height(self):
         result = generate_collection(2, [spec(1, 3, 1, [item(1, 4, 10000, 1200)])], qualities(), 5)

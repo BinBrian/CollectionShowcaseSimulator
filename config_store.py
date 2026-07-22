@@ -134,6 +134,8 @@ def canonicalize_value_costs(raw_bands: Any) -> List[Dict[str, Any]]:
             }
         )
         expected_min = upper
+    if bands[0]["minValue"] != 0:
+        raise ValidationError("value_ranges_must_start_at_zero", "第一个价值区间必须从 0 开始")
     if bands[-1]["maxValueExclusive"] is not None:
         raise ValidationError("missing_open_value_range", "最后一个价值区间必须没有上限")
     return bands
@@ -349,7 +351,11 @@ def save_all_configuration(
     List[Dict[str, Any]],
     List[Dict[str, Any]],
 ]:
-    """Validate and atomically replace every editable JSONL configuration file."""
+    """Validate all editable JSONL records and replace each file under one lock.
+
+    Each individual file replacement is atomic; the group is not a filesystem
+    transaction. The HTTP API intentionally exposes single-table writes only.
+    """
     qualities = canonicalize_quality_configs(raw_qualities)
     value_costs = canonicalize_value_costs(raw_value_costs)
     specs, items = canonicalize_configuration(
@@ -370,6 +376,8 @@ def _read_jsonl(path: Path, label: str) -> Optional[List[Dict[str, Any]]]:
         return None
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise ConfigStoreError("%s文件不是有效的 UTF-8 文本" % label) from error
     except OSError as error:
         raise ConfigStoreError("无法读取%s文件：%s" % (label, error)) from error
     records: List[Dict[str, Any]] = []
@@ -434,6 +442,51 @@ def load_configuration(
         raise ConfigStoreError("配置文件校验失败：%s" % error.message) from error
 
 
+def load_all_configuration_snapshot(
+    spec_path: Path = SPEC_CONFIG_PATH,
+    item_path: Path = ITEM_CONFIG_PATH,
+    quality_path: Path = QUALITY_CONFIG_PATH,
+    value_cost_path: Path = VALUE_COST_CONFIG_PATH,
+    resource_budget_path: Path = RESOURCE_BUDGET_CONFIG_PATH,
+) -> Tuple[
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+]:
+    """Read and validate all generator tables from one in-process snapshot."""
+    with _STORE_LOCK:
+        raw_specs = _read_jsonl(Path(spec_path), "道具规格配置")
+        raw_items = _read_jsonl(Path(item_path), "道具配置")
+        raw_qualities = _read_jsonl(Path(quality_path), "品质配置")
+        raw_value_costs = _read_jsonl(Path(value_cost_path), "价值资源消耗配置")
+        raw_resource_budgets = _read_jsonl(Path(resource_budget_path), "资源预算档位配置")
+    if any(
+        value is None
+        for value in (
+            raw_specs,
+            raw_items,
+            raw_qualities,
+            raw_value_costs,
+            raw_resource_budgets,
+        )
+    ):
+        raise ConfigStoreError("五份配表文件必须同时存在")
+    try:
+        qualities = canonicalize_quality_configs(raw_qualities)
+        value_costs = canonicalize_value_costs(raw_value_costs)
+        resource_budgets = canonicalize_resource_budgets(raw_resource_budgets)
+        specs, items = canonicalize_configuration(
+            raw_specs,
+            raw_items,
+            {quality["qualityId"] for quality in qualities},
+        )
+    except ValidationError as error:
+        raise ConfigStoreError("配置文件校验失败：%s" % error.message) from error
+    return specs, items, qualities, value_costs, resource_budgets
+
+
 def load_generation_settings(
     settings_path: Path = SETTINGS_CONFIG_PATH,
 ) -> Dict[str, Any]:
@@ -443,6 +496,8 @@ def load_generation_settings(
             return dict(DEFAULT_GENERATION_SETTINGS)
         try:
             raw_settings = json.loads(path.read_text(encoding="utf-8"))
+        except UnicodeDecodeError as error:
+            raise ConfigStoreError("基础参数文件不是有效的 UTF-8 文本") from error
         except OSError as error:
             raise ConfigStoreError("无法读取基础参数文件：%s" % error) from error
         except json.JSONDecodeError as error:
@@ -482,24 +537,22 @@ def save_configuration_table(
         "resource-budgets": Path(resource_budget_path),
     }
     with _STORE_LOCK:
-        raw_specs = _read_jsonl(paths["specs"], "道具规格配置")
-        raw_items = _read_jsonl(paths["items"], "道具配置")
-        raw_qualities = _read_jsonl(paths["qualities"], "品质配置")
-        raw_value_costs = _read_jsonl(paths["value-costs"], "价值资源消耗配置")
-        raw_resource_budgets = _read_jsonl(paths["resource-budgets"], "资源预算档位配置")
-        if any(value is None for value in (raw_specs, raw_items, raw_qualities, raw_value_costs, raw_resource_budgets)):
+        # Do not parse the table being replaced. This lets the editor repair a
+        # missing or malformed target file while still validating references.
+        raw_specs = raw_records if table == "specs" else _read_jsonl(paths["specs"], "道具规格配置")
+        raw_items = raw_records if table == "items" else _read_jsonl(paths["items"], "道具配置")
+        raw_qualities = raw_records if table == "qualities" else _read_jsonl(paths["qualities"], "品质配置")
+        raw_value_costs = raw_records if table == "value-costs" else _read_jsonl(paths["value-costs"], "价值资源消耗配置")
+        raw_resource_budgets = raw_records if table == "resource-budgets" else _read_jsonl(paths["resource-budgets"], "资源预算档位配置")
+        current_tables = {
+            "specs": raw_specs,
+            "items": raw_items,
+            "qualities": raw_qualities,
+            "value-costs": raw_value_costs,
+            "resource-budgets": raw_resource_budgets,
+        }
+        if any(value is None for name, value in current_tables.items() if name != table):
             raise ConfigStoreError("五份配表文件必须同时存在")
-        replacement = list(raw_records) if isinstance(raw_records, list) else raw_records
-        if table == "specs":
-            raw_specs = replacement
-        elif table == "items":
-            raw_items = replacement
-        elif table == "qualities":
-            raw_qualities = replacement
-        elif table == "value-costs":
-            raw_value_costs = replacement
-        else:
-            raw_resource_budgets = replacement
 
         qualities = canonicalize_quality_configs(raw_qualities)
         value_costs = canonicalize_value_costs(raw_value_costs)

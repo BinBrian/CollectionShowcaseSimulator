@@ -11,11 +11,11 @@ MAX_BOARD_WIDTH = 30
 MAX_SPEC_TYPES = 20
 MAX_ITEMS = 200
 MAX_POOL_ITEMS = 1_000
-MAX_QUALITY_TYPES = 20
+MAX_QUALITY_TYPES = 6
 MAX_RESOURCE_BUDGET_OPTIONS = 20
 MAX_WEIGHT = 1_000_000
 JS_SAFE_INTEGER = 9_007_199_254_740_991
-RESOURCE_BUDGETS = (6000, 3800, 2550, 1200)
+GENERATOR_VERSION = "3"
 QUALITY_COLORS = ("gray", "green", "blue", "purple", "orange", "red")
 QUALITIES = QUALITY_COLORS
 
@@ -107,7 +107,9 @@ def _reject_extra_fields(value: Dict[str, Any], allowed: Sequence[str], label: s
 
 def _validate_resource_budget_configs(raw_configs: Any) -> List[int]:
     if raw_configs is None:
-        return list(RESOURCE_BUDGETS)
+        raise ValidationError(
+            "missing_resource_budgets", "必须提供资源预算档位配置"
+        )
     if not isinstance(raw_configs, list) or not raw_configs:
         raise ValidationError("invalid_resource_budgets", "至少需要一条资源预算档位")
     if len(raw_configs) > MAX_RESOURCE_BUDGET_OPTIONS:
@@ -199,7 +201,6 @@ def _validate_inputs(
     specs: List[ItemSpec] = []
     seen_spec_ids = set()
     seen_item_ids = set()
-    maximum_item_value = 0
     for spec_index, raw_spec in enumerate(item_specs):
         label = "第 %d 条规格" % (spec_index + 1)
         if not isinstance(raw_spec, dict):
@@ -246,7 +247,6 @@ def _validate_inputs(
                     "unknown_quality_id", "%s引用了不存在的品质：%s" % (item_label, quality_id)
                 )
             value = _require_int(raw_item.get("value"), "%s价值" % item_label, 0, JS_SAFE_INTEGER)
-            maximum_item_value = max(maximum_item_value, value)
             items.append(
                 CatalogItem(
                     item_id,
@@ -260,10 +260,6 @@ def _validate_inputs(
                 )
             )
         specs.append(ItemSpec(spec_id, spec_width, spec_height, tuple(items), spec_index))
-    if maximum_item_value * MAX_ITEMS > JS_SAFE_INTEGER:
-        raise ValidationError(
-            "value_sum_too_large", "最大藏品价值总和超过 JavaScript 安全整数范围"
-        )
     return width, specs, qualities, actual_seed, configured_budget
 
 
@@ -341,6 +337,7 @@ def generate_collection(
             by_quality[item.quality_id].append((spec, item))
 
     selected: List[Tuple[ItemSpec, CatalogItem]] = []
+    termination_reason = "no_affordable_item"
     while len(selected) < MAX_ITEMS:
         affordable_qualities = []
         affordable_items = []
@@ -354,6 +351,7 @@ def generate_collection(
                 affordable_qualities.append(quality)
                 affordable_items.append(candidates)
         if not affordable_qualities:
+            termination_reason = "budget_exhausted" if remaining == 0 else "no_affordable_item"
             break
         selected_quality_index = rng.choices(
             range(len(affordable_qualities)),
@@ -363,6 +361,17 @@ def generate_collection(
         chosen = rng.choice(affordable_items[selected_quality_index])
         selected.append(chosen)
         remaining -= chosen[1].resource_cost
+
+    truncated = False
+    if len(selected) == MAX_ITEMS:
+        truncated = any(
+            item.resource_cost <= remaining
+            for spec in specs
+            for item in spec.items
+        )
+        termination_reason = "item_limit" if truncated else (
+            "budget_exhausted" if remaining == 0 else "no_affordable_item"
+        )
 
     if not selected:
         raise GenerationError(
@@ -408,8 +417,13 @@ def generate_collection(
 
     item_values = [item.value for _, item in selected]
     total_value = sum(item_values)
+    if total_value > JS_SAFE_INTEGER:
+        raise GenerationError(
+            "value_sum_too_large", "本局藏品总价值超过 JavaScript 安全整数范围"
+        )
     resource_consumed = resource_budget - remaining
     return {
+        "generatorVersion": GENERATOR_VERSION,
         "boardWidth": width,
         "boardHeight": dynamic_height,
         "seed": actual_seed,
@@ -418,6 +432,8 @@ def generate_collection(
         "resourceBudgetMode": "configured" if configured_budget is not None else "rolled",
         "resourceConsumed": resource_consumed,
         "resourceRemaining": remaining,
+        "terminationReason": termination_reason,
+        "truncated": truncated,
         "itemCount": len(selected),
         "totalValue": total_value,
         "averageValuePerOccupiedCell": round(total_value / occupied_count, 2),

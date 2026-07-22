@@ -27,19 +27,19 @@
       </div>
     </header>
 
-    <nav class="top-tabs" aria-label="工作台页签">
-      <button class="top-tab is-active" type="button" data-tab="settings" aria-selected="true">基础参数</button>
-      <button class="top-tab" type="button" data-tab="config" aria-selected="false">配置</button>
+    <nav class="top-tabs" role="tablist" aria-label="工作台页签">
+      <button class="top-tab is-active" id="tab-settings" role="tab" type="button" data-tab="settings" aria-controls="panel-settings" aria-selected="true">基础参数</button>
+      <button class="top-tab" id="tab-config" role="tab" type="button" data-tab="config" aria-controls="panel-config" aria-selected="false">配置</button>
     </nav>
 
-    <section class="tab-panel" data-tab-panel="config" hidden>
+    <section class="tab-panel" id="panel-config" role="tabpanel" aria-labelledby="tab-config" data-tab-panel="config" hidden>
       <div class="config-workspace panel">
         <aside class="table-sidebar">
           <div class="sidebar-heading"><span class="section-index">03</span><h2>数据配表</h2></div>
-          <button class="table-choice is-active" type="button" data-table="qualities"><span>品质与权重</span><strong data-count="qualities">0</strong></button>
+          <button class="table-choice is-active" type="button" data-table="qualities" aria-current="true"><span>品质与权重</span><strong data-count="qualities">0</strong></button>
           <button class="table-choice" type="button" data-table="specs"><span>道具规格</span><strong data-count="specs">0</strong></button>
           <button class="table-choice" type="button" data-table="items"><span>具体道具</span><strong data-count="items">0</strong></button>
-          <button class="table-choice" type="button" data-table="value-costs"><span>价值资源区间</span><strong data-count="value-costs">0</strong></button>
+          <button class="table-choice" type="button" data-table="value-costs"><span>价值资源点建议</span><strong data-count="value-costs">0</strong></button>
           <button class="table-choice" type="button" data-table="resource-budgets"><span>资源预算档位</span><strong data-count="resource-budgets">0</strong></button>
           <p class="sidebar-note">选择配表后在右侧编辑。每张表独立校验并保存。</p>
         </aside>
@@ -50,6 +50,7 @@
             <div class="toolbar-actions">
               <button class="ghost-button" id="reload-table" type="button">重新载入</button>
               <button class="ghost-button" id="add-row" type="button">＋ 添加一行</button>
+              <button class="ghost-button" id="apply-value-costs" type="button" hidden>应用建议到全部道具</button>
               <button class="primary-compact" id="save-table" type="button">保存当前配表</button>
             </div>
           </div>
@@ -59,7 +60,7 @@
       </div>
     </section>
 
-    <section class="tab-panel" data-tab-panel="settings">
+    <section class="tab-panel" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" data-tab-panel="settings">
       <div class="settings-workspace">
         <aside class="panel parameters-panel">
           <div class="section-heading"><div><span class="section-index">01</span><h2>生成参数</h2></div></div>
@@ -90,10 +91,10 @@
           </form>
         </aside>
 
-        <section class="panel preview-panel" aria-live="polite">
+        <section class="panel preview-panel">
           <div class="preview-topbar">
             <div><span class="section-index">02</span><h2>资源结果与网格</h2></div>
-            <div class="status-pill" id="generation-state" data-state="idle"><span class="status-dot"></span><span id="generation-state-text">等待生成</span></div>
+            <div class="status-pill" id="generation-state" data-state="idle" role="status" aria-live="polite"><span class="status-dot"></span><span id="generation-state-text">等待生成</span></div>
           </div>
           <div class="metrics" id="metrics" hidden>
             <div class="metric metric-primary"><span>最终总价值</span><strong id="metric-total-value">—</strong></div>
@@ -104,6 +105,7 @@
             <div class="metric"><span>消耗 / 剩余</span><strong id="metric-resource">—</strong></div>
             <div class="metric"><span>藏品 / 高度</span><strong id="metric-items">—</strong></div>
             <div class="metric"><span>实际种子</span><strong id="metric-seed">—</strong></div>
+            <div class="metric"><span>配表版本</span><strong id="metric-config-hash">—</strong></div>
             <div class="metric"><span>耗时</span><strong id="metric-time">—</strong></div>
           </div>
           <div class="value-notice" id="value-notice" hidden></div>

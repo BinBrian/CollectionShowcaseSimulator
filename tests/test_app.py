@@ -22,7 +22,7 @@ ITEMS = [
     {"itemId": 102, "name": "紫晶花瓶", "qualityId": 2, "value": 30000, "resourceCost": 500, "specId": 2},
 ]
 BANDS = [
-    {"minValue": 2000, "maxValueExclusive": 4000, "resourceCost": 50},
+    {"minValue": 0, "maxValueExclusive": 4000, "resourceCost": 50},
     {"minValue": 4000, "maxValueExclusive": 10000, "resourceCost": 200},
     {"minValue": 10000, "maxValueExclusive": 999999, "resourceCost": 500},
     {"minValue": 999999, "maxValueExclusive": None, "resourceCost": 900},
@@ -101,16 +101,16 @@ class AppTests(unittest.TestCase):
     def test_page_exposes_two_tab_workbench(self):
         with urlopen(self.base_url + "/", timeout=3) as response:
             body = response.read().decode("utf-8")
-        settings_tab = '<button class="top-tab is-active" type="button" data-tab="settings" aria-selected="true">基础参数</button>'
-        config_tab = '<button class="top-tab" type="button" data-tab="config" aria-selected="false">配置</button>'
+        settings_tab = '<button class="top-tab is-active" id="tab-settings" role="tab" type="button" data-tab="settings" aria-controls="panel-settings" aria-selected="true">基础参数</button>'
+        config_tab = '<button class="top-tab" id="tab-config" role="tab" type="button" data-tab="config" aria-controls="panel-config" aria-selected="false">配置</button>'
         self.assertIn(settings_tab, body)
         self.assertIn(config_tab, body)
         self.assertIn("藏品展仓模拟器", body)
         self.assertIn("COLLECTION SHOWCASE SIMULATOR", body)
         self.assertNotIn("BIDKING / COLLECTION WORKBENCH", body)
         self.assertLess(body.index(settings_tab), body.index(config_tab))
-        self.assertIn('<section class="tab-panel" data-tab-panel="settings">', body)
-        self.assertIn('<section class="tab-panel" data-tab-panel="config" hidden>', body)
+        self.assertIn('data-tab-panel="settings"', body)
+        self.assertIn('data-tab-panel="config" hidden', body)
         self.assertIn('data-tab="config"', body)
         self.assertIn('data-tab="settings"', body)
         self.assertIn('data-table="qualities"', body)
@@ -129,15 +129,16 @@ class AppTests(unittest.TestCase):
         self.assertIn("多选规则可叠加", body)
         self.assertIn("品质显示对应颜色填充与藏品黑色轮廓，规格只显示同款黑色轮廓", body)
         self.assertIn('id="config-table"', body)
+        self.assertIn('id="apply-value-costs"', body)
         with urlopen(self.base_url + "/static/app.js", timeout=3) as response:
             script = response.read().decode("utf-8")
         self.assertIn("window.confirm", script)
         self.assertNotIn("updateBudgetOptionsNote", script)
         self.assertNotIn("中等概率随机抽取", script)
-        self.assertIn("/api/config/${activeTable}", script)
+        self.assertIn("/api/config/${requestedTable}", script)
         self.assertIn('requestJson("/api/settings"', script)
         self.assertIn("async function waitRevealPhase", script)
-        self.assertIn("onDurationChange = null", script)
+        self.assertIn("onProgress = null", script)
         self.assertIn("const phaseDuration = Number(revealSpeed.value)", script)
         self.assertNotIn("const duration = window.matchMedia", script)
         generate_section = script.split("async function generate", 1)[1].split("async function initialize", 1)[0]
@@ -164,11 +165,10 @@ class AppTests(unittest.TestCase):
         self.assertIn("--item-outline:rgba(7,10,16,.92)", styles)
         self.assertIn("border:2px solid transparent", styles)
         self.assertNotIn("border-color .18s", styles)
-        self.assertIn(".item-overlay.is-revealed,.item-overlay.is-preview-spec,.item-overlay.is-preview-quality { border:2px solid var(--item-outline); box-shadow:none; }", styles)
+        self.assertIn(".item-overlay:is(.is-revealed,.is-preview-spec,.is-preview-quality,.is-loading) { border:2px solid var(--item-outline); box-shadow:none; }", styles)
         self.assertIn(".item-overlay.is-preview-quality { background:var(--preview-quality); }", styles)
-        self.assertIn(".item-overlay.is-preview-quality.is-preview-spec { background:var(--preview-quality); border:2px solid var(--item-outline); box-shadow:none; }", styles)
-        self.assertIn(".item-overlay.is-loading { border:2px solid var(--item-outline); box-shadow:none; }", styles)
-        self.assertIn("@keyframes reveal-quality { from { background-color:var(--occupied-cell); } to { background-color:var(--reveal-quality); } }", styles)
+        self.assertIn(".item-overlay.is-preview-quality.is-preview-spec,.item-overlay.is-loading.is-preview-quality { background:var(--preview-quality); }", styles)
+        self.assertIn(".snapshot-run", styles)
 
     def test_each_table_has_an_independent_read_endpoint(self):
         expected = {"qualities": QUALITIES, "specs": SPECS, "items": ITEMS, "value-costs": BANDS, "resource-budgets": BUDGETS}
@@ -224,6 +224,10 @@ class AppTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["resourceBudget"], 1350)
         self.assertEqual(body["resourceBudgetMode"], "configured")
+        self.assertEqual(body["generatorVersion"], "3")
+        self.assertEqual(len(body["configHash"]), 16)
+        self.assertIn(body["terminationReason"], {"budget_exhausted", "no_affordable_item", "item_limit"})
+        self.assertIsInstance(body["truncated"], bool)
         self.assertTrue({item["itemId"] for item in body["items"]}.issubset({101, 102}))
         self.assertTrue(all(item["name"] in {"旧银币", "紫晶花瓶"} for item in body["items"]))
 
@@ -248,6 +252,24 @@ class AppTests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertEqual(body["error"]["code"], "unsupported_field")
+
+    def test_json_writes_require_json_content_type(self):
+        request = Request(
+            self.base_url + "/api/generate",
+            data=b'{"boardWidth":6}',
+            headers={"Content-Type": "text/plain"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as context:
+            urlopen(request, timeout=3)
+        self.assertEqual(context.exception.code, 415)
+        body = json.loads(context.exception.read().decode("utf-8"))
+        self.assertEqual(body["error"]["code"], "unsupported_media_type")
+
+    def test_aggregate_config_write_is_removed(self):
+        status, body = self.request_json("/api/config", {}, method="PUT")
+        self.assertEqual(status, 410)
+        self.assertEqual(body["error"]["code"], "aggregate_config_write_removed")
 
     def test_same_seed_is_reproducible_except_time(self):
         payload = {"boardWidth": 6, "seed": 77, "targetResourceBudget": 1200}

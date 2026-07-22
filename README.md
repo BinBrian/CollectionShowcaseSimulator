@@ -26,4 +26,4 @@ python -m unittest discover -s tests -v
 
 ## 数据来源
 
-示例道具数据由 `tasks/import_orzice_collection.py` 从 [Orzice 收集品页面](https://orzice.com/v/collection) 导入。来源价格可能变化，需要更新时可重新执行导入任务；本项目本身不依赖该站点才能运行。
+示例道具数据由 `tasks/import_orzice_collection.py` 从 [Orzice 收集品页面](https://orzice.com/v/collection) 导入。更新时，导入器会按道具 ID 合并并保留已有规格与本地新增记录，再以原子替换方式写入目标文件；项目运行本身不依赖该站点。

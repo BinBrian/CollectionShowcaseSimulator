@@ -1,6 +1,7 @@
 """Dependency-free local server for Collection Showcase Simulator."""
 
 import argparse
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
@@ -18,11 +19,8 @@ from config_store import (
     SPEC_CONFIG_PATH,
     VALUE_COST_CONFIG_PATH,
     build_generator_specs,
-    load_configuration,
+    load_all_configuration_snapshot,
     load_generation_settings,
-    load_reference_configuration,
-    load_resource_budget_configuration,
-    save_all_configuration,
     save_configuration_table,
     save_generation_settings,
 )
@@ -65,6 +63,18 @@ class CollectionShowcaseHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _read_json_payload(self) -> Any:
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            self._send_json(
+                415,
+                {
+                    "error": {
+                        "code": "unsupported_media_type",
+                        "message": "请求正文必须使用 application/json",
+                    }
+                },
+            )
+            return None
         try:
             content_length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -122,11 +132,28 @@ class CollectionShowcaseHandler(BaseHTTPRequestHandler):
 
     def _load_all_configuration(self):
         spec_path, item_path, quality_path, value_cost_path, resource_budget_path = self._config_paths()
-        qualities, value_costs = load_reference_configuration(quality_path, value_cost_path)
-        resource_budgets = load_resource_budget_configuration(resource_budget_path)
-        quality_ids = {quality["qualityId"] for quality in qualities}
-        configuration = load_configuration(spec_path, item_path, quality_ids)
-        return configuration, qualities, value_costs, resource_budgets
+        specs, items, qualities, value_costs, resource_budgets = load_all_configuration_snapshot(
+            spec_path,
+            item_path,
+            quality_path,
+            value_cost_path,
+            resource_budget_path,
+        )
+        return (specs, items), qualities, value_costs, resource_budgets
+
+    @staticmethod
+    def _configuration_hash(configuration, qualities, value_costs, resource_budgets) -> str:
+        payload = {
+            "specs": configuration[0],
+            "items": configuration[1],
+            "qualities": qualities,
+            "valueCosts": value_costs,
+            "resourceBudgets": resource_budgets,
+        }
+        encoded = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()[:16]
 
     def do_GET(self) -> None:
         route = self.path.split("?", 1)[0]
@@ -229,9 +256,7 @@ class CollectionShowcaseHandler(BaseHTTPRequestHandler):
 
         started = time.perf_counter()
         try:
-            configuration, qualities, _, resource_budgets = self._load_all_configuration()
-            if configuration is None:
-                raise GenerationError("config_missing", "规格和道具配表尚未配置")
+            configuration, qualities, value_costs, resource_budgets = self._load_all_configuration()
             item_specs = build_generator_specs(configuration[0], configuration[1])
             result = generate_collection(
                 payload.get("boardWidth"),
@@ -240,6 +265,9 @@ class CollectionShowcaseHandler(BaseHTTPRequestHandler):
                 payload.get("seed"),
                 payload.get("targetResourceBudget"),
                 resource_budgets,
+            )
+            result["configHash"] = self._configuration_hash(
+                configuration, qualities, value_costs, resource_budgets
             )
         except ConfigStoreError as error:
             self._send_json(
@@ -323,69 +351,18 @@ class CollectionShowcaseHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"saved": True, "table": table, "records": records, "count": len(records)})
             return
 
-        if route != "/api/config":
-            self.send_error(404, "Not found")
-            return
-        payload = self._read_json_payload()
-        if payload is None:
-            return
-        unsupported_fields = sorted(
-            set(payload) - {"specs", "items", "qualities", "valueCosts"}
-        )
-        if unsupported_fields:
+        if route == "/api/config":
             self._send_json(
-                400,
+                410,
                 {
                     "error": {
-                        "code": "unsupported_field",
-                        "message": "不支持的请求字段：%s" % ", ".join(unsupported_fields),
+                        "code": "aggregate_config_write_removed",
+                        "message": "聚合配表写入已停用，请使用单表保存接口",
                     }
                 },
             )
             return
-        try:
-            spec_path, item_path, quality_path, value_cost_path, _ = self._config_paths()
-            specs, items, qualities, value_costs = save_all_configuration(
-                payload.get("specs"),
-                payload.get("items"),
-                payload.get("qualities"),
-                payload.get("valueCosts"),
-                spec_path,
-                item_path,
-                quality_path,
-                value_cost_path,
-            )
-        except ValidationError as error:
-            self._send_json(
-                400, {"error": {"code": error.code, "message": error.message}}
-            )
-            return
-        except ConfigStoreError as error:
-            self._send_json(
-                500,
-                {"error": {"code": "config_write_error", "message": str(error)}},
-            )
-            return
-        self._send_json(
-            200,
-            {
-                "saved": True,
-                "specs": specs,
-                "items": items,
-                "qualities": qualities,
-                "valueCosts": value_costs,
-                "specCount": len(specs),
-                "itemCount": len(items),
-                "qualityCount": len(qualities),
-                "valueCostCount": len(value_costs),
-                "files": {
-                    "specs": "data/item_specs.jsonl",
-                    "items": "data/items.jsonl",
-                    "qualities": "data/qualities.jsonl",
-                    "valueCosts": "data/value_costs.jsonl",
-                },
-            },
-        )
+        self.send_error(404, "Not found")
 
 
 def create_server(

@@ -16,6 +16,7 @@ from config_store import (
     resource_cost_for_value,
     save_all_configuration,
     save_configuration,
+    save_configuration_table,
     save_generation_settings,
 )
 from generator import ValidationError
@@ -26,7 +27,7 @@ QUALITIES = [
     {"qualityId": 2, "label": "绿", "color": "green", "weight": 200},
 ]
 BANDS = [
-    {"minValue": 2000, "maxValueExclusive": 4000, "resourceCost": 50},
+    {"minValue": 0, "maxValueExclusive": 4000, "resourceCost": 50},
     {"minValue": 4000, "maxValueExclusive": 10000, "resourceCost": 200},
     {"minValue": 10000, "maxValueExclusive": 999999, "resourceCost": 500},
     {"minValue": 999999, "maxValueExclusive": None, "resourceCost": 900},
@@ -72,6 +73,7 @@ class ConfigStoreTests(unittest.TestCase):
             band_path.write_text("\n".join(json.dumps(row) for row in BANDS), encoding="utf-8")
             loaded_qualities, loaded_bands = load_reference_configuration(quality_path, band_path)
             self.assertEqual(loaded_qualities, QUALITIES)
+            self.assertEqual(resource_cost_for_value(0, loaded_bands), 50)
             self.assertEqual(resource_cost_for_value(3999, loaded_bands), 50)
             self.assertEqual(resource_cost_for_value(4000, loaded_bands), 200)
             self.assertEqual(resource_cost_for_value(999999, loaded_bands), 900)
@@ -123,6 +125,8 @@ class ConfigStoreTests(unittest.TestCase):
             canonicalize_value_costs([BANDS[0], dict(BANDS[1], minValue=5000), *BANDS[2:]])
         with self.assertRaises(ValidationError):
             canonicalize_value_costs(BANDS[:-1])
+        with self.assertRaises(ValidationError):
+            canonicalize_value_costs([dict(BANDS[0], minValue=2000), *BANDS[1:]])
 
     def test_missing_or_invalid_jsonl_is_reported(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -131,6 +135,34 @@ class ConfigStoreTests(unittest.TestCase):
             spec_path.write_text('{"specId":1,"width":1,"height":1}\n', encoding="utf-8")
             with self.assertRaises(ConfigStoreError):
                 load_configuration(spec_path, item_path)
+
+    def test_malformed_target_table_can_be_repaired(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = [
+                root / "specs.jsonl",
+                root / "items.jsonl",
+                root / "qualities.jsonl",
+                root / "value_costs.jsonl",
+                root / "resource_budgets.jsonl",
+            ]
+            specs, items = sample_configuration()
+            paths[0].write_bytes(b"\xff\xfeinvalid")
+            for path, records in zip(paths[1:], (items, QUALITIES, BANDS, BUDGETS)):
+                path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in records) + "\n", encoding="utf-8")
+            saved = save_configuration_table("specs", specs, *paths)
+            self.assertEqual(saved, specs)
+            self.assertEqual(load_configuration(paths[0], paths[1], {1, 2}), (specs, items))
+
+    def test_non_utf8_jsonl_has_structured_store_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            quality_path = Path(directory) / "qualities.jsonl"
+            band_path = Path(directory) / "bands.jsonl"
+            quality_path.write_bytes(b"\xff\xfeinvalid")
+            band_path.write_text(json.dumps(BANDS[-1]) + "\n", encoding="utf-8")
+            with self.assertRaises(ConfigStoreError) as context:
+                load_reference_configuration(quality_path, band_path)
+            self.assertIn("UTF-8", str(context.exception))
 
 
 if __name__ == "__main__":
