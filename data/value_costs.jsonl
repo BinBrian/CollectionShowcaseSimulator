@@ -1,0 +1,4 @@
+{"minValue":0,"maxValueExclusive":4000,"resourceCost":50}
+{"minValue":4000,"maxValueExclusive":10000,"resourceCost":200}
+{"minValue":10000,"maxValueExclusive":999999,"resourceCost":500}
+{"minValue":999999,"maxValueExclusive":null,"resourceCost":900}

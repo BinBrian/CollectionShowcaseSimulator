@@ -1,0 +1,12 @@
+{"itemId":1,"name":"藏品 1","qualityId":1,"value":12000,"resourceCost":500,"specId":1}
+{"itemId":2,"name":"藏品 2","qualityId":2,"value":26000,"resourceCost":500,"specId":1}
+{"itemId":3,"name":"藏品 3","qualityId":3,"value":43000,"resourceCost":500,"specId":1}
+{"itemId":4,"name":"藏品 4","qualityId":2,"value":30000,"resourceCost":500,"specId":2}
+{"itemId":5,"name":"藏品 5","qualityId":4,"value":58000,"resourceCost":500,"specId":2}
+{"itemId":6,"name":"藏品 6","qualityId":5,"value":88000,"resourceCost":500,"specId":2}
+{"itemId":7,"name":"藏品 7","qualityId":3,"value":52000,"resourceCost":500,"specId":3}
+{"itemId":8,"name":"藏品 8","qualityId":4,"value":76000,"resourceCost":500,"specId":3}
+{"itemId":9,"name":"藏品 9","qualityId":6,"value":130000,"resourceCost":500,"specId":3}
+{"itemId":10,"name":"藏品 10","qualityId":4,"value":82000,"resourceCost":500,"specId":4}
+{"itemId":11,"name":"藏品 11","qualityId":5,"value":115000,"resourceCost":500,"specId":4}
+{"itemId":12,"name":"藏品 12","qualityId":6,"value":168000,"resourceCost":500,"specId":4}

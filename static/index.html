@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="藏品展仓模拟器：配表驱动的藏品生成与展示工具">
+  <title>藏品展仓模拟器</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="page-glow page-glow-one"></div>
+  <div class="page-glow page-glow-two"></div>
+  <main class="app-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">COLLECTION SHOWCASE SIMULATOR</p>
+        <h1>藏品展仓模拟器</h1>
+        <p class="hero-copy">配表驱动品质、规格、道具与资源消耗，基础参数独立保存。</p>
+      </div>
+      <div class="legend" aria-label="六档品质图例">
+        <span class="legend-dot quality-gray"></span><span>白</span>
+        <span class="legend-dot quality-green"></span><span>绿</span>
+        <span class="legend-dot quality-blue"></span><span>蓝</span>
+        <span class="legend-dot quality-purple"></span><span>紫</span>
+        <span class="legend-dot quality-orange"></span><span>金</span>
+        <span class="legend-dot quality-red"></span><span>红</span>
+      </div>
+    </header>
+
+    <nav class="top-tabs" aria-label="工作台页签">
+      <button class="top-tab is-active" type="button" data-tab="settings" aria-selected="true">基础参数</button>
+      <button class="top-tab" type="button" data-tab="config" aria-selected="false">配置</button>
+    </nav>
+
+    <section class="tab-panel" data-tab-panel="config" hidden>
+      <div class="config-workspace panel">
+        <aside class="table-sidebar">
+          <div class="sidebar-heading"><span class="section-index">03</span><h2>数据配表</h2></div>
+          <button class="table-choice is-active" type="button" data-table="qualities"><span>品质与权重</span><strong data-count="qualities">0</strong></button>
+          <button class="table-choice" type="button" data-table="specs"><span>道具规格</span><strong data-count="specs">0</strong></button>
+          <button class="table-choice" type="button" data-table="items"><span>具体道具</span><strong data-count="items">0</strong></button>
+          <button class="table-choice" type="button" data-table="value-costs"><span>价值资源区间</span><strong data-count="value-costs">0</strong></button>
+          <button class="table-choice" type="button" data-table="resource-budgets"><span>资源预算档位</span><strong data-count="resource-budgets">0</strong></button>
+          <p class="sidebar-note">选择配表后在右侧编辑。每张表独立校验并保存。</p>
+        </aside>
+
+        <section class="table-editor">
+          <div class="editor-toolbar">
+            <div><span class="section-index">04</span><h2 id="active-table-title">品质与权重</h2><p id="active-table-file">data/qualities.jsonl</p></div>
+            <div class="toolbar-actions">
+              <button class="ghost-button" id="reload-table" type="button">重新载入</button>
+              <button class="ghost-button" id="add-row" type="button">＋ 添加一行</button>
+              <button class="primary-compact" id="save-table" type="button">保存当前配表</button>
+            </div>
+          </div>
+          <p id="config-status" class="inline-status" role="status" aria-live="polite"></p>
+          <div class="config-table-scroll"><div id="config-table" class="config-table" aria-live="polite"></div></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="settings">
+      <div class="settings-workspace">
+        <aside class="panel parameters-panel">
+          <div class="section-heading"><div><span class="section-index">01</span><h2>生成参数</h2></div></div>
+          <form id="generator-form" novalidate>
+            <div class="parameter-fields">
+              <label class="field"><span>容纳盒宽度</span><input id="board-width" type="number" min="1" max="30" required></label>
+              <label class="field"><span>目标资源点</span><input id="target-resource-budget" type="number" min="1" placeholder="留空则随机四档"></label>
+              <label class="field"><span>随机种子</span><input id="seed" type="number" min="0" placeholder="留空则随机"></label>
+            </div>
+            <div class="reveal-speed-control">
+              <label for="reveal-speed">单件披露时长 <output id="reveal-speed-value" for="reveal-speed">0.25 秒</output></label>
+              <input id="reveal-speed" type="range" min="0" max="0.5" step="0.01" value="0.25">
+              <div class="range-labels" aria-hidden="true"><span>0 秒</span><span>0.5 秒</span></div>
+            </div>
+            <div class="preview-tags-control">
+              <div class="preview-tags-heading"><span>披露前预览 Tag</span><small>多选规则可叠加</small></div>
+              <div class="preview-tag-row"><span>品质</span><div class="preview-tag-list" id="preview-quality-tags"></div></div>
+              <div class="preview-tag-row"><span>规格</span><div class="preview-tag-list" id="preview-spec-tags"></div></div>
+              <p>品质显示对应颜色填充与藏品黑色轮廓，规格只显示同款黑色轮廓；均不显示具体藏品信息。</p>
+            </div>
+            <p id="settings-status" class="inline-status" role="status" aria-live="polite"></p>
+            <div id="form-error" class="inline-error" role="alert" hidden></div>
+            <div class="parameter-actions">
+              <button class="secondary-button" id="save-settings" type="button">保存默认参数</button>
+              <button class="primary-button" id="generate-button" type="submit"><span>生成藏品</span><span class="button-arrow">→</span></button>
+              <button class="secondary-button" id="reveal-button" type="button" disabled>展示</button>
+            </div>
+          </form>
+        </aside>
+
+        <section class="panel preview-panel" aria-live="polite">
+          <div class="preview-topbar">
+            <div><span class="section-index">02</span><h2>资源结果与网格</h2></div>
+            <div class="status-pill" id="generation-state" data-state="idle"><span class="status-dot"></span><span id="generation-state-text">等待生成</span></div>
+          </div>
+          <div class="metrics" id="metrics" hidden>
+            <div class="metric metric-primary"><span>最终总价值</span><strong id="metric-total-value">—</strong></div>
+            <div class="metric"><span>每格平均价值</span><strong id="metric-average-cell-value">—</strong></div>
+            <div class="metric"><span>藏品平均价值</span><strong id="metric-average-item-value">—</strong></div>
+            <div class="metric"><span>藏品价值中位数</span><strong id="metric-median-item-value">—</strong></div>
+            <div class="metric"><span>本局资源预算</span><strong id="metric-budget">—</strong></div>
+            <div class="metric"><span>消耗 / 剩余</span><strong id="metric-resource">—</strong></div>
+            <div class="metric"><span>藏品 / 高度</span><strong id="metric-items">—</strong></div>
+            <div class="metric"><span>实际种子</span><strong id="metric-seed">—</strong></div>
+            <div class="metric"><span>耗时</span><strong id="metric-time">—</strong></div>
+          </div>
+          <div class="value-notice" id="value-notice" hidden></div>
+          <div class="error-card" id="error-card" hidden><strong id="error-title">无法生成藏品</strong><p id="error-message"></p><ul id="error-suggestions"></ul></div>
+          <div class="board-stage">
+            <div class="empty-state" id="empty-state"><div class="empty-glyph" aria-hidden="true"><span></span><span></span><span></span><span></span></div><h3>尚未生成藏品</h3><p>确认配表后，使用左侧参数开始生成。</p></div>
+            <div class="board-scroll" id="board-scroll" hidden><div class="board" id="board" aria-label="藏品动态网格"></div></div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
